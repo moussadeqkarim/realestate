@@ -422,10 +422,22 @@ function drawCoverFrame(canvas, image) {
   context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
 }
 
+function scheduleIdleWork(callback, timeout = 1600) {
+  if ("requestIdleCallback" in window) {
+    const idleId = window.requestIdleCallback(callback, { timeout });
+    return () => window.cancelIdleCallback?.(idleId);
+  }
+
+  const timeoutId = window.setTimeout(callback, timeout);
+  return () => window.clearTimeout(timeoutId);
+}
+
 function MobileCanvasSequence({ chapter, progress }) {
   const wrapperRef = useRef(null);
   const canvasRef = useRef(null);
   const imagesRef = useRef([]);
+  const requestedFramesRef = useRef(new Set());
+  const loadFrameWindowRef = useRef(() => {});
   const progressRef = useRef(0);
   const drawRafRef = useRef(0);
   const [ready, setReady] = useState(false);
@@ -434,6 +446,7 @@ function MobileCanvasSequence({ chapter, progress }) {
   const frameCount = sequence?.frameCount ?? 0;
   const shouldLoad = useNearViewport(wrapperRef, "120% 0px");
   const poster = sequence?.poster || chapter.video?.mobilePoster || chapter.video?.poster;
+  const canvasActive = ready && progress > 0.006;
 
   const drawCurrentFrame = () => {
     const canvas = canvasRef.current;
@@ -453,8 +466,15 @@ function MobileCanvasSequence({ chapter, progress }) {
 
   useEffect(() => {
     progressRef.current = clamp(progress);
-    if (ready) requestDraw();
-  }, [progress, ready]);
+    if (!ready) return;
+
+    if (progress > 0.006) {
+      const targetIndex = Math.round(progressRef.current * Math.max(frameCount - 1, 0));
+      loadFrameWindowRef.current(targetIndex, 3);
+    }
+
+    requestDraw();
+  }, [progress, ready, frameCount]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -491,12 +511,21 @@ function MobileCanvasSequence({ chapter, progress }) {
     if (!shouldLoad || !sequence || !frameCount) return;
 
     let cancelled = false;
+    let warmupTimeout = 0;
+    let remainingTimeout = 0;
+    let cancelRemainingIdle = () => {};
     imagesRef.current = new Array(frameCount);
+    requestedFramesRef.current = new Set();
     setReady(false);
     setFailed(false);
 
-    const loadImage = index =>
-      new Promise(resolve => {
+    const loadImage = index => {
+      if (index < 0 || index >= frameCount) return Promise.resolve();
+      if (imagesRef.current[index] || requestedFramesRef.current.has(index)) return Promise.resolve();
+
+      requestedFramesRef.current.add(index);
+
+      return new Promise(resolve => {
         const image = new Image();
         image.decoding = "async";
         image.fetchPriority = index === 0 ? "high" : "low";
@@ -518,13 +547,26 @@ function MobileCanvasSequence({ chapter, progress }) {
         };
         image.src = formatFrameUrl(sequence, index + 1);
       });
+    };
 
-    loadImage(0);
+    const loadFrameWindow = (centerIndex, radius = 2) => {
+      const start = Math.max(0, centerIndex - radius);
+      const end = Math.min(frameCount - 1, centerIndex + radius);
+      const loaders = [];
+
+      for (let index = start; index <= end; index += 1) {
+        loaders.push(loadImage(index));
+      }
+
+      return Promise.all(loaders);
+    };
+
+    loadFrameWindowRef.current = loadFrameWindow;
 
     const loadRemainingFrames = async () => {
-      for (let start = 1; start < frameCount && !cancelled; start += 4) {
+      for (let start = 1; start < frameCount && !cancelled; start += 3) {
         await Promise.all(
-          [0, 1, 2, 3]
+          [0, 1, 2]
             .map(offset => start + offset)
             .filter(index => index < frameCount)
             .map(loadImage)
@@ -532,10 +574,27 @@ function MobileCanvasSequence({ chapter, progress }) {
       }
     };
 
-    loadRemainingFrames();
+    loadImage(0).then(() => {
+      if (cancelled) return;
+
+      warmupTimeout = window.setTimeout(() => {
+        if (!cancelled) {
+          loadFrameWindow(0, 5);
+        }
+      }, 2600);
+
+      remainingTimeout = window.setTimeout(() => {
+        if (!cancelled) {
+          cancelRemainingIdle = scheduleIdleWork(loadRemainingFrames, 2400);
+        }
+      }, 5200);
+    });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(warmupTimeout);
+      window.clearTimeout(remainingTimeout);
+      cancelRemainingIdle();
     };
   }, [shouldLoad, sequence, frameCount]);
 
@@ -545,8 +604,19 @@ function MobileCanvasSequence({ chapter, progress }) {
 
   return (
     <div ref={wrapperRef} className={`mobile-canvas-scene ${chapter.kind}`} aria-hidden="true">
-      {poster && <img className="video-poster mobile-canvas-poster" src={poster} alt="" loading="eager" decoding="async" />}
-      <canvas ref={canvasRef} className={`mobile-sequence-canvas ${ready ? "is-ready" : ""}`} />
+      {poster && (
+        <img
+          className="video-poster mobile-canvas-poster"
+          src={poster}
+          alt=""
+          width="720"
+          height="1280"
+          loading="eager"
+          decoding="sync"
+          fetchPriority="high"
+        />
+      )}
+      <canvas ref={canvasRef} className={`mobile-sequence-canvas ${ready ? "is-ready" : ""} ${canvasActive ? "is-active" : ""}`} />
       <div className="scene-grade" />
     </div>
   );

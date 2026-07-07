@@ -223,6 +223,10 @@ svg {
   background-image: url("/assets/frames/estate-site.png");
 }
 
+.mobile-canvas-scene.estate {
+  background-image: none;
+}
+
 .frame-stack.tower,
 .video-stack.tower {
   background-image: url("/assets/frames/tower-site.png");
@@ -254,7 +258,7 @@ svg {
 
 .mobile-canvas-poster {
   object-position: center center;
-  transform: scale(1.002);
+  transform: none;
 }
 
 .mobile-sequence-canvas {
@@ -264,7 +268,7 @@ svg {
   will-change: opacity;
 }
 
-.mobile-sequence-canvas.is-ready {
+.mobile-sequence-canvas.is-ready.is-active {
   opacity: 1;
 }
 
