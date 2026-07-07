@@ -25,7 +25,14 @@ const chapters = [
       poster: "/assets/video/estate-scroll-full-poster.jpg",
       final: "/assets/video/estate-scroll-full-final.jpg",
       mobilePoster: "/assets/video/estate-scroll-mobile-poster.jpg",
-      mobileFinal: "/assets/video/estate-scroll-mobile-final.jpg"
+      mobileFinal: "/assets/video/estate-scroll-mobile-final.jpg",
+      mobileSequence: {
+        frameBase: "/assets/mobile-sequence/estate-mobile-",
+        frameCount: 60,
+        extension: "jpg",
+        pad: 4,
+        poster: "/assets/mobile-sequence/estate-mobile-0001.jpg"
+      }
     },
     stats: [
       ["Custom", "Home Builds"],
@@ -174,6 +181,27 @@ function useMediaQuery(query) {
   }, [query]);
 
   return matches;
+}
+
+function useSaveData() {
+  const [saveData, setSaveData] = useState(false);
+
+  useEffect(() => {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+
+    if (!connection) return;
+
+    const update = () => {
+      const effectiveType = connection.effectiveType || "";
+      setSaveData(Boolean(connection.saveData) || /(^|-)2g$/.test(effectiveType));
+    };
+
+    update();
+    connection.addEventListener?.("change", update);
+    return () => connection.removeEventListener?.("change", update);
+  }, []);
+
+  return saveData;
 }
 
 function useNearViewport(ref, rootMargin = "80% 0px") {
@@ -353,6 +381,177 @@ function StaticBuildScene({ chapter, progress }) {
   );
 }
 
+function formatFrameUrl(sequence, index) {
+  const frameNumber = String(index).padStart(sequence.pad ?? 4, "0");
+  return `${sequence.frameBase}${frameNumber}.${sequence.extension ?? "jpg"}`;
+}
+
+function findNearestLoadedFrame(images, targetIndex) {
+  if (images[targetIndex]) return images[targetIndex];
+
+  for (let offset = 1; offset < images.length; offset += 1) {
+    const before = targetIndex - offset;
+    const after = targetIndex + offset;
+
+    if (before >= 0 && images[before]) return images[before];
+    if (after < images.length && images[after]) return images[after];
+  }
+
+  return null;
+}
+
+function drawCoverFrame(canvas, image) {
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context || !image?.naturalWidth || !image?.naturalHeight || !canvas.width || !canvas.height) return;
+
+  const canvasRatio = canvas.width / canvas.height;
+  const imageRatio = image.naturalWidth / image.naturalHeight;
+  let sourceWidth = image.naturalWidth;
+  let sourceHeight = image.naturalHeight;
+  let sourceX = 0;
+  let sourceY = 0;
+
+  if (imageRatio > canvasRatio) {
+    sourceWidth = image.naturalHeight * canvasRatio;
+    sourceX = (image.naturalWidth - sourceWidth) / 2;
+  } else {
+    sourceHeight = image.naturalWidth / canvasRatio;
+    sourceY = (image.naturalHeight - sourceHeight) / 2;
+  }
+
+  context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+}
+
+function MobileCanvasSequence({ chapter, progress }) {
+  const wrapperRef = useRef(null);
+  const canvasRef = useRef(null);
+  const imagesRef = useRef([]);
+  const progressRef = useRef(0);
+  const drawRafRef = useRef(0);
+  const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const sequence = chapter.video?.mobileSequence;
+  const frameCount = sequence?.frameCount ?? 0;
+  const shouldLoad = useNearViewport(wrapperRef, "120% 0px");
+  const poster = sequence?.poster || chapter.video?.mobilePoster || chapter.video?.poster;
+
+  const drawCurrentFrame = () => {
+    const canvas = canvasRef.current;
+    const images = imagesRef.current;
+    const targetIndex = Math.round(progressRef.current * Math.max(frameCount - 1, 0));
+    const image = findNearestLoadedFrame(images, targetIndex);
+
+    if (canvas && image) {
+      drawCoverFrame(canvas, image);
+    }
+  };
+
+  const requestDraw = () => {
+    cancelAnimationFrame(drawRafRef.current);
+    drawRafRef.current = requestAnimationFrame(drawCurrentFrame);
+  };
+
+  useEffect(() => {
+    progressRef.current = clamp(progress);
+    if (ready) requestDraw();
+  }, [progress, ready]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const wrapper = wrapperRef.current;
+    if (!canvas || !wrapper) return;
+
+    const resize = () => {
+      const rect = wrapper.getBoundingClientRect();
+      const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+      const width = Math.max(1, Math.round(rect.width * ratio));
+      const height = Math.max(1, Math.round(rect.height * ratio));
+
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      requestDraw();
+    };
+
+    resize();
+    const resizeObserver = "ResizeObserver" in window ? new ResizeObserver(resize) : null;
+    resizeObserver?.observe(wrapper);
+    window.addEventListener("resize", resize);
+
+    return () => {
+      cancelAnimationFrame(drawRafRef.current);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", resize);
+    };
+  }, [ready]);
+
+  useEffect(() => {
+    if (!shouldLoad || !sequence || !frameCount) return;
+
+    let cancelled = false;
+    imagesRef.current = new Array(frameCount);
+    setReady(false);
+    setFailed(false);
+
+    const loadImage = index =>
+      new Promise(resolve => {
+        const image = new Image();
+        image.decoding = "async";
+        image.fetchPriority = index === 0 ? "high" : "low";
+        image.onload = () => {
+          if (!cancelled) {
+            imagesRef.current[index] = image;
+            if (index === 0) {
+              setReady(true);
+            }
+            requestDraw();
+          }
+          resolve();
+        };
+        image.onerror = () => {
+          if (!cancelled && index === 0) {
+            setFailed(true);
+          }
+          resolve();
+        };
+        image.src = formatFrameUrl(sequence, index + 1);
+      });
+
+    loadImage(0);
+
+    const loadRemainingFrames = async () => {
+      for (let start = 1; start < frameCount && !cancelled; start += 4) {
+        await Promise.all(
+          [0, 1, 2, 3]
+            .map(offset => start + offset)
+            .filter(index => index < frameCount)
+            .map(loadImage)
+        );
+      }
+    };
+
+    loadRemainingFrames();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shouldLoad, sequence, frameCount]);
+
+  if (!sequence || failed) {
+    return <StaticBuildScene chapter={chapter} progress={progress} />;
+  }
+
+  return (
+    <div ref={wrapperRef} className={`mobile-canvas-scene ${chapter.kind}`} aria-hidden="true">
+      {poster && <img className="video-poster mobile-canvas-poster" src={poster} alt="" loading="eager" decoding="async" />}
+      <canvas ref={canvasRef} className={`mobile-sequence-canvas ${ready ? "is-ready" : ""}`} />
+      <div className="scene-grade" />
+    </div>
+  );
+}
+
 function ScrollScrubVideo({ chapter, progress }) {
   const wrapperRef = useRef(null);
   const videoRef = useRef(null);
@@ -447,7 +646,11 @@ function ScrollScrubVideo({ chapter, progress }) {
   );
 }
 
-function VisualSequence({ chapter, progress, staticExperience }) {
+function VisualSequence({ chapter, progress, mobileExperience, staticExperience }) {
+  if (mobileExperience && chapter.video?.mobileSequence) {
+    return <MobileCanvasSequence chapter={chapter} progress={progress} />;
+  }
+
   if (staticExperience) {
     return <StaticBuildScene chapter={chapter} progress={progress} />;
   }
@@ -464,7 +667,9 @@ function ConstructionChapter({ chapter }) {
   const progress = useSectionProgress(sectionRef);
   const isCompactViewport = useMediaQuery("(max-width: 820px)");
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const staticExperience = isCompactViewport || prefersReducedMotion;
+  const saveData = useSaveData();
+  const mobileExperience = isCompactViewport && !prefersReducedMotion && !saveData;
+  const staticExperience = prefersReducedMotion || (isCompactViewport && saveData);
   const visualProgress = prefersReducedMotion ? 1 : progress;
   const currentStage = Math.min(chapter.stages.length - 1, Math.floor(visualProgress * chapter.stages.length));
   const statsVisible = prefersReducedMotion || visualProgress > 0.78;
@@ -477,7 +682,12 @@ function ConstructionChapter({ chapter }) {
       ref={sectionRef}
     >
       <div className="construction-sticky">
-        <VisualSequence chapter={chapter} progress={visualProgress} staticExperience={staticExperience} />
+        <VisualSequence
+          chapter={chapter}
+          progress={visualProgress}
+          mobileExperience={mobileExperience}
+          staticExperience={staticExperience}
+        />
         <StageRail stages={chapter.stages} progress={visualProgress} />
         <div
           className="chapter-copy"

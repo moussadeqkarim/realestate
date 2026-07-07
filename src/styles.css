@@ -205,7 +205,8 @@ svg {
 
 .frame-stack,
 .video-stack,
-.static-build-scene {
+.static-build-scene,
+.mobile-canvas-scene {
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -217,7 +218,8 @@ svg {
 
 .frame-stack.estate,
 .video-stack.estate,
-.static-build-scene.estate {
+.static-build-scene.estate,
+.mobile-canvas-scene.estate {
   background-image: url("/assets/frames/estate-site.png");
 }
 
@@ -230,7 +232,8 @@ svg {
 .scene-frame,
 .video-poster,
 .scroll-video,
-.static-scene-image {
+.static-scene-image,
+.mobile-sequence-canvas {
   position: absolute;
   inset: -1px;
   width: calc(100% + 2px);
@@ -247,6 +250,22 @@ svg {
 .video-poster,
 .scroll-video {
   transform: scale(1.006);
+}
+
+.mobile-canvas-poster {
+  object-position: center center;
+  transform: scale(1.002);
+}
+
+.mobile-sequence-canvas {
+  display: block;
+  opacity: 0;
+  transition: opacity 180ms ease;
+  will-change: opacity;
+}
+
+.mobile-sequence-canvas.is-ready {
+  opacity: 1;
 }
 
 .static-scene-image {
@@ -360,6 +379,12 @@ svg {
   background:
     linear-gradient(90deg, rgba(7, 7, 6, 0.62), rgba(7, 7, 6, 0.2) 34%, rgba(7, 7, 6, 0.04) 72%),
     linear-gradient(180deg, rgba(7, 7, 6, 0.42), rgba(7, 7, 6, 0) 30%, rgba(7, 7, 6, 0.24));
+}
+
+.mobile-canvas-scene .scene-grade {
+  background:
+    linear-gradient(90deg, rgba(7, 7, 6, 0.56), rgba(7, 7, 6, 0.14) 48%, rgba(7, 7, 6, 0.08)),
+    linear-gradient(180deg, rgba(7, 7, 6, 0.42), rgba(7, 7, 6, 0.02) 32%, rgba(7, 7, 6, 0.36));
 }
 
 .chapter-copy {
