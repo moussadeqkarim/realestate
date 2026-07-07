@@ -422,16 +422,6 @@ function drawCoverFrame(canvas, image) {
   context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
 }
 
-function scheduleIdleWork(callback, timeout = 1600) {
-  if ("requestIdleCallback" in window) {
-    const idleId = window.requestIdleCallback(callback, { timeout });
-    return () => window.cancelIdleCallback?.(idleId);
-  }
-
-  const timeoutId = window.setTimeout(callback, timeout);
-  return () => window.clearTimeout(timeoutId);
-}
-
 function MobileCanvasSequence({ chapter, progress }) {
   const wrapperRef = useRef(null);
   const canvasRef = useRef(null);
@@ -470,7 +460,7 @@ function MobileCanvasSequence({ chapter, progress }) {
 
     if (progress > 0.006) {
       const targetIndex = Math.round(progressRef.current * Math.max(frameCount - 1, 0));
-      loadFrameWindowRef.current(targetIndex, 3);
+      loadFrameWindowRef.current(targetIndex, 5);
     }
 
     requestDraw();
@@ -511,9 +501,6 @@ function MobileCanvasSequence({ chapter, progress }) {
     if (!shouldLoad || !sequence || !frameCount) return;
 
     let cancelled = false;
-    let warmupTimeout = 0;
-    let remainingTimeout = 0;
-    let cancelRemainingIdle = () => {};
     imagesRef.current = new Array(frameCount);
     requestedFramesRef.current = new Set();
     setReady(false);
@@ -563,38 +550,10 @@ function MobileCanvasSequence({ chapter, progress }) {
 
     loadFrameWindowRef.current = loadFrameWindow;
 
-    const loadRemainingFrames = async () => {
-      for (let start = 1; start < frameCount && !cancelled; start += 3) {
-        await Promise.all(
-          [0, 1, 2]
-            .map(offset => start + offset)
-            .filter(index => index < frameCount)
-            .map(loadImage)
-        );
-      }
-    };
-
-    loadImage(0).then(() => {
-      if (cancelled) return;
-
-      warmupTimeout = window.setTimeout(() => {
-        if (!cancelled) {
-          loadFrameWindow(0, 5);
-        }
-      }, 2600);
-
-      remainingTimeout = window.setTimeout(() => {
-        if (!cancelled) {
-          cancelRemainingIdle = scheduleIdleWork(loadRemainingFrames, 2400);
-        }
-      }, 5200);
-    });
+    loadImage(0);
 
     return () => {
       cancelled = true;
-      window.clearTimeout(warmupTimeout);
-      window.clearTimeout(remainingTimeout);
-      cancelRemainingIdle();
     };
   }, [shouldLoad, sequence, frameCount]);
 
