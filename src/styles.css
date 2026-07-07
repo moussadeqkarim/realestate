@@ -209,6 +209,7 @@ svg {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  contain: paint;
   background-color: #111;
   background-size: cover;
   background-position: center center;
@@ -720,6 +721,8 @@ svg {
   gap: 78px;
   padding: 138px 64px;
   overflow: hidden;
+  content-visibility: auto;
+  contain-intrinsic-size: 1100px;
   background: #f4edde;
   color: #1a1410;
 }

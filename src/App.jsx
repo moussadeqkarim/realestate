@@ -21,7 +21,7 @@ const chapters = [
       complete: "/assets/frames/estate-complete.png"
     },
     video: {
-      src: "/assets/video/estate-scroll-full-scrub.mp4",
+      src: "/assets/video/estate-scroll-scrub-optimized.mp4",
       poster: "/assets/video/estate-scroll-full-poster.jpg",
       final: "/assets/video/estate-scroll-full-final.jpg",
       mobilePoster: "/assets/video/estate-scroll-mobile-poster.jpg",
@@ -357,7 +357,9 @@ function ScrollScrubVideo({ chapter, progress }) {
   const wrapperRef = useRef(null);
   const videoRef = useRef(null);
   const frameRef = useRef(0);
+  const lastSeekRef = useRef(0);
   const targetProgressRef = useRef(0);
+  const [metadataReady, setMetadataReady] = useState(false);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const shouldLoad = useNearViewport(wrapperRef);
@@ -369,7 +371,7 @@ function ScrollScrubVideo({ chapter, progress }) {
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!shouldLoad || !video || !ready || !Number.isFinite(video.duration) || video.duration <= 0) return;
+    if (!shouldLoad || !video || !metadataReady || !Number.isFinite(video.duration) || video.duration <= 0) return;
 
     let active = true;
     const duration = Math.max(video.duration - 0.04, 0);
@@ -379,11 +381,14 @@ function ScrollScrubVideo({ chapter, progress }) {
 
       const targetTime = targetProgressRef.current * duration;
       const delta = targetTime - video.currentTime;
+      const now = performance.now();
 
-      if (Math.abs(delta) > 0.018 && video.readyState >= 2) {
-        const nextTime = Math.abs(delta) > 1.2 ? targetTime : video.currentTime + delta * 0.34;
+      if (Math.abs(delta) > 0.025 && video.readyState >= 2 && !video.seeking && now - lastSeekRef.current > 32) {
+        const maxStep = Math.abs(delta) > 1 ? 0.34 : 0.18;
+        const nextTime = video.currentTime + clamp(delta * 0.36, -maxStep, maxStep);
         try {
           video.currentTime = clamp(nextTime, 0, duration);
+          lastSeekRef.current = now;
         } catch {
           setFailed(true);
         }
@@ -398,7 +403,7 @@ function ScrollScrubVideo({ chapter, progress }) {
       active = false;
       cancelAnimationFrame(frameRef.current);
     };
-  }, [ready, shouldLoad]);
+  }, [metadataReady, shouldLoad]);
 
   if (failed || !chapter.video?.src) {
     return <FrameStack chapter={chapter} progress={progress} />;
@@ -420,7 +425,7 @@ function ScrollScrubVideo({ chapter, progress }) {
         className={`scroll-video ${ready ? "is-ready" : ""}`}
         src={shouldLoad ? chapter.video.src : undefined}
         poster={chapter.video.poster}
-        preload={shouldLoad ? "metadata" : "none"}
+        preload={shouldLoad ? "auto" : "none"}
         muted
         playsInline
         onLoadedMetadata={() => {
@@ -430,8 +435,10 @@ function ScrollScrubVideo({ chapter, progress }) {
             video.pause();
             video.currentTime = 0;
           }
-          setReady(true);
+          setMetadataReady(true);
         }}
+        onLoadedData={() => setReady(true)}
+        onCanPlay={() => setReady(true)}
         onError={() => setFailed(true)}
         aria-hidden="true"
       />
